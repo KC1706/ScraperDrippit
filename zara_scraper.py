@@ -10,9 +10,11 @@ import time
 import os
 from time import sleep
 import json
+import schedule
+import psycopg2
 
 
-def get_title(item):
+def get_label(item):
     """Extract title from Zara product item"""
     try:
        
@@ -51,19 +53,38 @@ def get_description(item):
 
 
 def get_prices(item):
-    """Extract current and original prices from Zara product item"""
+    """Extract current and original prices from Zara product item as objects with currency."""
     try:
         price_elem = item.find('span', class_='price-current__amount')
         if not price_elem:
             return None, None
             
         current_price = price_elem.find('span').text.strip().replace('₹', '').replace(',', '')
+        current_price_float = float(current_price)
         
         original_elem = item.find('span', class_='price-old__amount price__amount price__amount-old')
-        original_price = original_elem.find('span').text.strip().replace('₹', '').replace(',', '') if original_elem else current_price
+        original_price_float = None
+        discount = None
+        
+        if original_elem:
+            original_price = original_elem.find('span').text.strip().replace('₹', '').replace(',', '')
+            original_price_float = float(original_price)
+            if original_price_float > current_price_float:
+                discount = round(((original_price_float - current_price_float) / original_price_float) * 100, 2)
 
-        return float(current_price), float(original_price)
-    except:
+        price_obj = {
+            "default": current_price_float,
+            "price_meta": {
+                "CURRENCY": "INR",
+                "OLD_PRICE": original_price_float,
+                "DISCOUNT": discount
+            }
+        }
+
+        return price_obj, None  # Second return value kept for backward compatibility
+
+    except Exception as e:
+        print(f"Error extracting prices: {e}")
         return None, None
 
 
@@ -104,8 +125,8 @@ def get_item_image_link(container):
             if img_tag:
                 image_urls.append(img_tag.get('src', ''))
 
-        # Remove empty links from the list
-        image_urls = [url for url in image_urls if url]  # Filter out empty links
+        # Remove URLs that contain '375' and empty links from the list
+        image_urls = [url for url in image_urls if '375' not in url and url]  # Filter out URLs with '375' and empty links
 
         return image_urls
     except Exception as e:
@@ -115,95 +136,47 @@ def get_item_image_link(container):
         driver.quit()
 
 
-def write_to_json(products, filename='products.json'):
-    """Save product details to a JSON file."""
-    try:
-        print(f"starting to write to json")
+def write_to_json(product, filename='products.json'):
+    """Append a single product's details to a JSON file."""
+    # Ensure the file exists and is a valid JSON array
+    if not os.path.exists(filename):
         with open(filename, 'w') as json_file:
-            json.dump(products, json_file, indent=4)
-        print(f"Data successfully written to {filename}")
-    except Exception as e:
-        print(f"An error occurred while writing to {filename}: {e}")
+            json.dump([], json_file)  # Create an empty JSON array
+
+    # Read existing products
+    with open(filename, 'r') as json_file:
+        products = json.load(json_file)
+
+    # Append the new product
+    products.append(product)
+
+    # Write back to the file
+    with open(filename, 'w') as json_file:
+        json.dump(products, json_file, indent=4)
 
 def get_all_info(container):
-    """
-    Calls get_title, get_target_gender, get_prices, get_item_image_link, get_colors
-    to get the important information for the current item.
-    :param container: The item container for the current item
-    :return: title, gender, current_price, old_price, item_link, image_link, and colors
-    """
-
-    # Go through each item container
-    title = get_title(container)
-    # gender = get_target_gender(container)
-    current_price, old_price = get_prices(container)
+    label = get_label(container)
+    price, _ = get_prices(container)
     item_link = container.find("a", {"class": "product-link _item product-grid-product-info__name link"})["href"]
-    description = get_description(container)  
+    description = get_description(container)
     print(f"description of the item: {description}")
     item_image_link = get_item_image_link(container)
 
-    # Create a product dictionary to store the details
     product_info = {
-        "title": title,
+        "label": label,
         "description": description,
-        "current_price": current_price,
-        "old_price": old_price,
-        "item_link": item_link,
-        "item_image_link": item_image_link
+        "price": price,
+        "images": item_image_link if item_image_link else [],
+        "meta": {
+            "ITEM_LINK": item_link,
+        },
     }
     
     return product_info
 
 
 
-def write_to_csv(category_links, categories):
-    """
-    Given the list of links for the subcategories of the men and women's clothing section of Nike,
-    grab the product information and write to CSV files in the nike_scraped folder.
-    """
 
-
-    if not os.path.exists("zara_scraped"):
-        os.makedirs("zara_scraped")
-
-    header = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
-    category_index = 0
-    for category in category_links:
-        # print("Starting section: " + categories[category_index])
-
-     
-        category_name = categories[category_index]
-        category_split = category_name.split("_")
-        file_path = os.path.join("zara_scraped", f"zara_{category_split[1]}_{category_split[0]}.csv")
-        
-        with open(file_path, "w") as f:
-            headers = "Name, Description, Image, Link Price, Sale Price, Item Link \n"
-            f.write(headers)
-            for link in category:
-                # print(f"Searching link: {link}")
-                category_client = requests.get(link, headers=header)
-                category_soup = BeautifulSoup(category_client.content, "lxml")
-                item_containers = category_soup.findAll("div", {"class": "product-grid-product-info"})
-                
-                index=0
-             
-                while(index<len(item_containers)):
-                   
-                    
-                    title, description, current_price, old_price, \
-                        item_link,image_link= get_all_info(item_containers[index])
-                    index=index+1
-                
-
-                    f.write(title + ","  +str(description)+ ","+ str(image_link) +  "," + str(current_price) + "," + str(old_price) +
-                             ", " + str(item_link) +
-                             "\n")
-
-        print("Finished section: " + categories[category_index])
-        category_index = category_index + 1
 
 
 def fetch_url_with_retries(url, headers, retries=3, delay=5):
@@ -220,24 +193,22 @@ def fetch_url_with_retries(url, headers, retries=3, delay=5):
                 raise
 
 
-def main():
-    """
-    Using modules requests and BeautifulSoup, scrape the Nike website for the clothing sections
-    of both men and women, creating a .csv file for each subcategory of the clothing sections.
-    The program currently only grabs the lazily loaded products, and creates 21 different .csv files.
+def scrape_and_update():
+    """Function to scrape Zara's website and update database."""
+    # Get database connection
+    conn = get_db_connection()
+    if not conn:
+        print("Failed to connect to database")
+        return
 
-    :return: None
-    """
-    start_time = time.time()
+    # Create table if it doesn't exist
+    create_products_table(conn)
     
-    # Add header definition here
+    # Your existing scraping code...
     header = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    print("Starting to scrape Zara's website. Average runtime is around twenty minutes.")
-
-    
     clothing_links = [
         "https://www.zara.com/in/en/woman-blazers-l1055.html?v1=2417363",
         "https://www.zara.com/in/en/woman-dresses-l1066.html?v1=2417457&regionGroupId=80",
@@ -261,41 +232,106 @@ def main():
         "https://www.zara.com/in/en/man-jeans-l659.html?v1=2415695&regionGroupId=80",
     ]
 
-   
     clothing_category_links = [clothing_links[0:10],
                                clothing_links[10:13],
                                clothing_links[13:18],
                                clothing_links[18:20],]
-    
-    categories = [
-                  "women_tops",
-                  "women_bottoms",
-                  "men_tops",
-                  "men_bottoms",
-                  ]
 
-    all_products = []  
+    try:
+        # Clear existing products
+        with conn.cursor() as cur:
+            cur.execute("TRUNCATE TABLE products RESTART IDENTITY")
+        conn.commit()
 
-    for category in clothing_category_links:
-        for link in category:
-            category_client = requests.get(link, headers=header)
-            category_soup = BeautifulSoup(category_client.content, "lxml")
-            item_containers = category_soup.findAll("div", {"class": "product-grid-product-info"})
-            
-            for container in item_containers:
-                product_info = get_all_info(container)
-                print(f"product_info of this item: {product_info}")
-                if product_info:  # Check if product_info is not None
-                    all_products.append(product_info)  
+        for category in clothing_category_links:
+            for link in category:
+                category_client = requests.get(link, headers=header)
+                category_soup = BeautifulSoup(category_client.content, "lxml")
+                item_containers = category_soup.findAll("div", {"class": "product-grid-product-info"})
+                
+                for container in item_containers:
+                    product_info = get_all_info(container)
+                    if product_info:
+                        insert_product_to_db(conn, product_info)
+                        print(f"Inserted product: {product_info['label']}")
 
-    print(f"Total products scraped: {len(all_products)}")  # Debugging statement
-    write_to_json(all_products)  # Save all products to JSON file
+        print("Finished scraping and updating database.")
+    except Exception as e:
+        print(f"Error during scraping: {e}")
+    finally:
+        conn.close()
 
-    time_taken = round(time.time() - start_time)
-    time_minutes = time_taken // 60
-    time_seconds = time_taken % 60
-    print("Finished scraping Nike in", str(time_minutes) + " minutes and " + str(time_seconds) + " seconds.")
+# Schedule the scraping to run every 24 hours
+schedule.every(24).hours.do(scrape_and_update)
 
+DATABASE_URL = "postgresql://stylo:zer1Ayhuumvdi0WiyFeNcjq7NrwEbLIc@dpg-cte6h3a3esus73br6idg-a.singapore-postgres.render.com/stylo"
+
+def get_db_connection():
+    try:
+        connection = psycopg2.connect(
+            DATABASE_URL,
+            sslmode='require',
+            connect_timeout=10
+        )
+        return connection
+    except Exception as e:
+        print(f"Error connecting to database: {e}")
+        return None
+
+def create_products_table(conn):
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS products (
+                    id SERIAL PRIMARY KEY,
+                    label TEXT,
+                    description TEXT,
+                    price_default FLOAT,
+                    price_currency TEXT,
+                    price_old FLOAT,
+                    price_discount FLOAT,
+                    images TEXT[],
+                    item_link TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        conn.commit()
+        print("Products table created successfully")
+    except Exception as e:
+        print(f"Error creating table: {e}")
+
+def insert_product_to_db(conn, product):
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO products (
+                    label, description, price_default, price_currency, 
+                    price_old, price_discount, images, item_link
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                product['label'],
+                product['description'],
+                product['price']['default'],
+                product['price']['price_meta']['CURRENCY'],
+                product['price']['price_meta']['OLD_PRICE'],
+                product['price']['price_meta']['DISCOUNT'],
+                product['images'],
+                product['meta']['ITEM_LINK']
+            ))
+        conn.commit()
+    except Exception as e:
+        print(f"Error inserting product: {e}")
 
 if __name__ == "__main__":
-    main()
+    # Make sure you have psycopg2 installed
+    try:
+        import psycopg2
+        from psycopg2.extras import Json
+    except ImportError:
+        print("Please install psycopg2: pip install psycopg2-binary")
+        exit(1)
+
+    scrape_and_update()  # Initial run
+    while True:
+        schedule.run_pending()
+        time.sleep(1)

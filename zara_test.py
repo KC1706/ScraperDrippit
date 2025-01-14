@@ -104,3 +104,62 @@ else:
 
 # finally:
 #     driver.quit()
+
+
+
+# def write_to_csv(category_links, categories):
+#     """
+#     Given the list of links for the subcategories of the men and women's clothing section of Nike,
+#     grab the product information and write to CSV files in the nike_scraped folder.
+#     """
+
+
+#     if not os.path.exists("zara_scraped"):
+#         os.makedirs("zara_scraped")
+
+#     header = {
+#         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+#     }
+
+#     category_index = 0
+#     for category in category_links:
+#         # print("Starting section: " + categories[category_index])
+
+     
+#         category_name = categories[category_index]
+#         category_split = category_name.split("_")
+#         file_path = os.path.join("zara_scraped", f"zara_{category_split[1]}_{category_split[0]}.csv")
+        
+#         with open(file_path, "w") as f:
+#             headers = "Name, Description, Image, Link Price, Sale Price, Item Link \n"
+#             f.write(headers)
+#             for link in category:
+#                 # print(f"Searching link: {link}")
+#                 category_client = requests.get(link, headers=header)
+#                 category_soup = BeautifulSoup(category_client.content, "lxml")
+#                 item_containers = category_soup.findAll("div", {"class": "product-grid-product-info"})
+                
+#                 index=0
+             
+#                 while(index<len(item_containers)):
+                   
+                    
+#                     title, description, current_price, old_price, \
+#                         item_link,image_link= get_all_info(item_containers[index])
+#                     index=index+1
+                
+
+#                     f.write(title + ","  +str(description)+ ","+ str(image_link) +  "," + str(current_price) + "," + str(old_price) +
+#                              ", " + str(item_link) +
+#                              "\n")
+
+#         print("Finished section: " + categories[category_index])
+#         category_index = category_index + 1
+
+
+    # categories = [
+    #               "women_tops",
+    #               "women_bottoms",
+    #               "men_tops",
+    #               "men_bottoms",
+    #               ]
